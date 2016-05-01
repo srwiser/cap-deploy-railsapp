@@ -1,0 +1,25 @@
+namespace :db do
+
+	desc 'create a database user'
+	task :setup do
+		on roles(:all) do
+			upload! "shared/database.yml", "/tmp/"
+			db_yml = capture("cat /tmp/database.yml")
+			db_config = YAML.load(db_yml)
+			db_config = db_config["production"]
+			dbuser = db_config['username']
+			dbpass = db_config['password']
+			env_db = db_config['database']
+
+			begin
+				execute("psql -U #{dbuser} -d #{env_db}")
+			rescue
+				command = <<-scr
+				  sudo -u postgres psql -c "create user #{dbuser} with nosuperuser nocreaterole createdb password '#{dbpass}'"
+				scr
+				execute(command) rescue nil
+			end
+		end
+	end
+
+end

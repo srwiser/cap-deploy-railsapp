@@ -1,0 +1,45 @@
+namespace :env do
+
+  desc 'Check if we have required permissions'
+  task :check_permissions do
+    on roles(:all) do |host|
+      execute "sudo mkdir -p #{fetch(:deploy_to)}"
+      if test("[ -w #{fetch(:deploy_to)} ]")
+        info "#{fetch(:deploy_to)} is writable on #{host}"
+      else
+        info "#{fetch(:deploy_to)} is not writable on #{host}"
+        execute "sudo chmod -R 777 #{fetch(:deploy_to)}"
+      end
+    end
+  end
+
+
+  desc 'Install required programs like git, dbms and ruby'
+  task :prepare_env do
+    on roles(:all) do |host|
+      begin
+        execute 'sudo yum install epel-release'
+      rescue
+        info 'epel-release was already installed'
+      end
+
+      execute 'sudo yum -y install libxml2 libxslt xmlsec1 xmlsec1-openssl libcurl curl mysql-devel git'
+      execute 'sudo yum -y install git nginx'
+      execute 'sudo yum -y install postgresql-server'
+      
+      begin
+        execute "#{fetch(:source_profile)} && ruby --version"
+      rescue
+        execute 'command curl -sSL https://rvm.io/mpapis.asc | gpg --import -'
+        execute '\\curl -L https://get.rvm.io | bash -s stable'
+        execute 'source ~/.rvm/scripts/rvm'
+        # sourcing .bash_profile each time to load rvm as function in shell
+        execute "#{fetch(:source_profile)} && rvm install #{fetch(:ruby_version)}"
+        execute "#{fetch(:source_profile)} && rvm use --default #{fetch(:ruby_version)}"
+      end
+    end
+  end
+
+  before :prepare_env, :check_permissions
+end
+

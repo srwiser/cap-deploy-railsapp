@@ -1,0 +1,118 @@
+namespace :app do
+
+	task :setup_config do
+		on roles(:app) do
+			upload! "shared/nginx.conf", "#{shared_path}/"
+			execute "sudo cp #{shared_path}/nginx.conf /etc/nginx/nginx.conf"
+
+			## Database YML File
+			upload! "shared/database.yml", "#{shared_path}/"
+			execute "cp #{shared_path}/database.yml #{fetch(:dir)}/config/"
+
+			if not File.file?('/etc/init.d/unicorn-server')
+				upload! "shared/unicorn-server", "#{shared_path}/unicorn-server"
+				execute "sed -i 's/application/#{fetch(:application)}/g' #{shared_path}/unicorn-server"
+				execute "sed -i 's/deployuser/#{fetch(:deployuser)}/' #{shared_path}/unicorn-server"
+				execute "sudo cp #{shared_path}/unicorn-server /etc/init.d/"
+				execute "sudo chmod a+x /etc/init.d/unicorn-server"
+			end
+
+			upload! "shared/unicorn.rb", "#{shared_path}/unicorn.rb"
+			execute "sed -i 's/application/#{fetch(:application)}/g' #{shared_path}/unicorn.rb"
+			execute "cp #{shared_path}/unicorn.rb #{fetch(:dir)}/config/unicorn.rb"
+
+			if not File.file?('/etc/nginx/conf.d/default.conf')
+				upload! "shared/default.conf", "#{shared_path}/default.conf"
+				execute "sed -i 's/application/#{fetch(:application)}/g' #{shared_path}/default.conf"
+				execute "sudo cp #{shared_path}/default.conf /etc/nginx/conf.d/"
+			end
+		end
+	end
+
+
+	task :bundle_install do
+		on roles(:app) do
+			script = <<-command
+				cd #{fetch :dir}
+				#{fetch(:source_profile)}
+				bundle install
+			command
+			begin
+				if not File.file?('~/.gemrc')
+					upload! "shared/gemrc", "#{shared_path}/"
+					execute "cp #{shared_path}/gemrc ~/.gemrc"
+				end
+				execute script
+			rescue
+				execute "#{fetch(:source_profile)} && gem install bundler"
+				retry
+			end
+		end
+	end
+
+	task :assets_compile do
+		on roles(:app) do
+			begin
+				script = <<-command
+					cd #{fetch :dir}
+					#{fetch(:source_profile)}
+					RAILS_ENV=#{fetch(:rails_env)} bundle exec rake assets:precompile
+				command
+				execute script
+			rescue
+				info 'Some error occured in precompiling assets'
+			end
+		end
+	end
+
+	desc 'Start the application server'
+	task :app_start do
+		on roles(:app) do
+
+			script = <<-command
+				cd #{fetch :dir}
+				#{fetch(:source_profile)}
+				mkdir -p tmp/pids
+				sudo service unicorn-server start
+			command
+			begin
+				execute script
+				info 'Unicorn Server Started'
+			rescue
+				info 'Unicorn Server not Started!!'
+			end
+			execute "sudo service nginx restart"
+
+		end
+	end
+
+	task :app_stop do
+		on roles(:app) do
+			script = <<-command
+			    cd #{fetch :dir}
+				#{fetch(:source_profile)}
+				sudo /etc/init.d/unicorn-server stop
+			command
+			
+			begin
+				execute script		
+			rescue Exception => e
+				info 'Server was not running'
+			end
+		end
+	end
+
+	desc 'Restart the application server'
+	task :app_restart do
+		on roles(:app) do
+			invoke 'app:app_stop'
+			invoke 'app:app_start'
+			info 'Restarted Unicorn.. Wait for the servers to be up'
+		end
+	end
+
+	before :app_restart, :setup_config
+	before :app_restart, :bundle_install
+	before :app_restart, :assets_compile
+
+end
